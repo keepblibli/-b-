@@ -1,3 +1,15 @@
+简洁流程
+1. **下载**：本页 `Code → Download ZIP`，解压到 `C:\dylm\`，
+   把解压出来的 `-b--main` 文件夹**改名为 `douyin-live-monitor`**
+2. **装 Python**：python.org 下载 3.10+，安装时勾上 **Add to PATH**
+3. **起服务**：双击 `C:\dylm\douyin-live-monitor\start_server.cmd`
+   （首次会自动建环境、装依赖，然后打开面板 http://127.0.0.1:8787/）
+4. **装插件**：Edge 打开 `edge://extensions/` → 开**开发人员模式**
+   → **加载解压缩的扩展** → 选 `C:\dylm\douyin-live-monitor\extension`
+5. **开直播间**：登录抖音 / B站 → 打开任意直播间 → 等 15 秒，面板里出现曲线
+
+**日常**：每次开机先双击一次 `start_server.cmd`；采集时直播间页面别关。
+
 # 直播间人数采集（抖音 + B站 / Edge 扩展 + Python 本地服务）
 
 用你**已经登录的 Edge** 采集抖音和 B站网页版直播间的人数，落到本地 SQLite，带一个实时曲线面板。
