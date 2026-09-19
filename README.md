@@ -13,6 +13,6 @@
 
 6.点加载解压缩的扩展 → 选 C:\dylm\douyin-live-monitor\extension 这个子目录
  ⚠️ 别选项目根目录——根目录里没有 manifest.json，会报 Manifest file is missing or unreadable
-7。登录抖音和 B站
+7.登录抖音和 B站
 
 8.打开一个直播间，等 15~30 秒，面板里出现 [抖音] / [B站] 房间
