@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>抖音直播间人数监控</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e8ecf3;
+    --muted: #8b95a7; --accent: #fe2c55; --ok: #2ecc71; --warn: #f5a623;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .spacer { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--accent); }
+  .muted { color: var(--muted); font-size: 12px; }
+  main { padding: 18px 20px 40px; display: grid; gap: 16px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  select, button { background: #1e222b; color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  button.active { border-color: var(--accent); color: #fff; background: #2a1b22; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .card .k { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .card .v { font-size: 24px; font-weight: 600; letter-spacing: .5px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  #chart { width: 100%; height: 380px; }
+  .cols { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .events { max-height: 380px; overflow: auto; font-size: 13px; }
+  .events div { padding: 6px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; }
+  code { background: #12151b; padding: 1px 5px; border-radius: 4px; color: #ffb3c1; font-size: 12px; }
+  .keys { display: flex; flex-wrap: wrap; gap: 6px; }
+  .keys code { color: #9fd3ff; }
+  .badge { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line);
+    font-size: 12px; color: var(--muted); }
+  .badge.on { border-color: var(--ok); color: var(--ok); }
+  .badge.off { border-color: #3a2028; color: #7a5a63; }
+</style>
+</head>
+<body>
+<header>
+  <h1>直播间人数监控（抖音 + B站）</h1>
+  <span id="conn"><span class="dot" id="connDot"></span> <span class="muted" id="connText">连接中…</span></span>
+  <div class="spacer"></div>
+  <span class="muted" id="roomCount"></span>
+  <label class="muted">房间 <select id="roomSel"></select></label>
+  <label class="muted" title="房间多了以后，只列出最近 1 小时还有数据的，避免列表被“点进去看一眼”的房间塞满">
+    <input type="checkbox" id="onlyActive" checked /> 只看活跃
+  </label>
+  <button id="refresh">立即刷新</button>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="row">
+      <span class="muted">采集通道</span>
+      <span class="badge" id="chHook">页面注入</span>
+      <span class="badge" id="chWs">WebSocket</span>
+      <span class="badge" id="chSeq">在线人数消息</span>
+      <span class="badge" id="chApi">房间接口</span>
+      <span class="badge" id="chSrv">本地服务</span>
+      <div class="spacer"></div>
+      <span class="muted" id="dbInfo">存储统计加载中…</span>
+    </div>
+    <div class="muted" id="diagHint" style="margin-top:8px">等待扩展上报…</div>
+  </div>
+
+  <div class="row">
+    <span class="muted">指标</span>
+    <span id="metricBar" class="row" style="gap:8px"></span>
+    <span class="muted" style="margin-left:12px">时间窗</span>
+    <button class="range" data-minutes="30">30 分钟</button>
+    <button class="range active" data-minutes="60">1 小时</button>
+    <button class="range" data-minutes="180">3 小时</button>
+    <button class="range" data-minutes="720">12 小时</button>
+    <button class="range" data-minutes="1440">24 小时</button>
+    <div class="spacer"></div>
+    <span class="muted" id="pointsInfo"></span>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="k">当前值</div><div class="v" id="cur">—</div><div class="muted" id="curMeta"></div></div>
+    <div class="card"><div class="k">峰值（24h）</div><div class="v" id="peak">—</div></div>
+    <div class="card"><div class="k">均值（24h）</div><div class="v" id="avg">—</div></div>
+    <div class="card"><div class="k">采样点数（24h）</div><div class="v" id="count">—</div></div>
+  </div>
+
+  <div class="panel"><div id="chart"></div></div>
+
+  <div class="cols">
+    <div class="panel">
+      <div class="muted" style="margin-bottom:8px">事件（开播 / 下播 / 异常飙升 / 首次出现）</div>
+      <div class="events" id="events"></div>
+    </div>
+    <div class="panel">
+      <div class="muted" style="margin-bottom:8px">接口里出现过的字段（用于适配抖音改版）</div>
+      <div class="keys" id="keys"></div>
+      <div class="muted" style="margin-top:12px">导出</div>
+      <div class="row" style="margin-top:8px">
+        <a id="csvLink" class="muted" href="#" download>下载当前指标的 CSV</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const state = {
+  roomId: null, metric: 'online', minutes: 60, timer: null, chart: null,
+  // 标签由服务端下发（抖音 / B站 指标不同），这里只留一份兜底
+  labels: { online: '在线人数', watched: '累计观看', likes: '点赞', popularity: '人气值', room_viewers: '房间观众' },
+  platformLabel: '',
+  showAll: false
+};
+
+// 房间下拉框只在"房间集合真的变了"时才重建，见 loadRooms()
+let roomSignature = '';
+let selectBusy = false;
+const ACTIVE_WINDOW_MS = 60 * 60 * 1000;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => (n == null ? '—' : n.toLocaleString('zh-CN'));
+const fmtCn = (n) => {
+  if (n == null) return '—';
+  if (n >= 1e8) return (n / 1e8).toFixed(2) + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(2) + '万';
+  return String(n);
+};
+const timeStr = (ms) => new Date(ms).toLocaleTimeString('zh-CN', { hour12: false });
+
+async function api(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(path + ' → HTTP ' + res.status);
+  return res.json();
+}
+
+function setConn(cls, text) {
+  $('connDot').className = 'dot ' + cls;
+  $('connText').textContent = text;
+}
+
+async function loadRooms() {
+  const data = await api('/api/rooms');
+  if (data.metricLabels) Object.assign(state.labels, data.metricLabels);
+  const sel = $('roomSel');
+  const prev = state.roomId || localStorage.getItem('dy_room');
+
+  let rooms = data.rooms;
+  if (state.showAll === false) {
+    const fresh = rooms.filter((r) => Date.now() - (r.last_seen || 0) < ACTIVE_WINDOW_MS);
+    // 当前选中的房间即使暂时没数据也留在列表里，否则视图会跳走
+    if (prev && !fresh.some((r) => r.room_id === prev)) {
+      const cur = rooms.find((r) => r.room_id === prev);
+      if (cur) fresh.push(cur);
+    }
+    rooms = fresh;
+  }
+
+  if (!rooms.length) {
+    if (roomSignature !== '(empty)') {
+      roomSignature = '(empty)';
+      sel.innerHTML = '<option>（没有数据）</option>';
+    }
+    state.roomId = null;
+    return;
+  }
+
+  const signature = rooms
+    .map((r) => `${r.room_id}|${r.nickname || ''}|${r.platformLabel || ''}`)
+    .join(',');
+  const target = rooms.some((r) => r.room_id === prev) ? prev : rooms[0].room_id;
+
+  /*
+   * 关键修复：**只在房间集合变化、且用户没在操作下拉框时才重建 DOM**。
+   * 之前每 5 秒无条件 `sel.innerHTML = ''` 重建，房间一多（列表变长）就会出现
+   * "还没滚到底列表就被清空重建、浏览器把展开的下拉关掉" —— 表现为选了也选不中
+   * 其他直播间。顺带也解决了长列表滚动位置丢失、刚点开就弹回的问题。
+   */
+  if (signature !== roomSignature && !selectBusy) {
+    roomSignature = signature;
+    sel.innerHTML = '';
+    for (const r of rooms) {
+      const opt = document.createElement('option');
+      opt.value = r.room_id;
+      const tag = r.platformLabel ? `[${r.platformLabel}] ` : '';
+      opt.textContent = `${tag}${r.nickname || r.room_id} · ${r.room_id}`;
+      sel.appendChild(opt);
+    }
+    $('roomCount').textContent = state.showAll
+      ? `共 ${data.rooms.length} 个房间`
+      : `${rooms.length} 个活跃 / 共 ${data.rooms.length} 个`;
+  }
+  state.roomId = target;
+  if (sel.value !== target) sel.value = target;
+}
+
+/**
+ * 指标按钮按“这个房间真的有数据的指标”动态生成。
+ * 抖音有 online/watched，B站是 popularity/room_viewers/…，
+ * 写死在 HTML 里就会给 B 站房间显示一个永远是空的“在线人数”。
+ */
+function renderMetricBar(summary) {
+  const bar = $('metricBar');
+  const available = Object.keys(summary.stats || {}).filter((m) => (summary.stats[m]?.samples || 0) > 0);
+  if (!available.length) {
+    bar.innerHTML = '<span class="muted">该房间还没有任何指标数据</span>';
+    return;
+  }
+  if (!available.includes(state.metric)) state.metric = available[0];
+  bar.innerHTML = available
+    .map((m) => `<button class="metric${m === state.metric ? ' active' : ''}" data-metric="${m}">${state.labels[m] || m}</button>`)
+    .join('');
+  bar.querySelectorAll('.metric').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      state.metric = btn.dataset.metric;
+      bar.querySelectorAll('.metric').forEach((b) => b.classList.toggle('active', b === btn));
+      refresh();
+    })
+  );
+}
+
+function renderEvents(events) {
+  const box = $('events');
+  if (!events.length) { box.innerHTML = '<div class="muted">暂无事件</div>'; return; }
+  const names = { live_start: '开播', live_end: '下播', spike: '异常飙升', first_seen: '首次采集', status_change: '状态变化' };
+  box.innerHTML = events.map((e) => {
+    let detail = '';
+    try { detail = e.detail ? JSON.stringify(JSON.parse(e.detail)) : ''; } catch (_) { detail = e.detail || ''; }
+    return `<div><span class="muted">${timeStr(e.ts)}</span><b>${names[e.kind] || e.kind}</b><span class="muted">${detail}</span></div>`;
+  }).join('');
+}
+
+function renderChart(points, label) {
+  if (!state.chart) return;
+  const data = points.map((p) => [p.ts, p.value]);
+  state.chart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 64, right: 24, top: 24, bottom: 44 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (ps) => {
+        const p = ps[0];
+        const raw = points[p.dataIndex] || {};
+        return `${timeStr(p.value[0])}<br/>${label}: <b>${fmt(p.value[1])}</b>` +
+          (raw.n > 1 ? `<br/><span style="color:#8b95a7">桶内 ${raw.n} 点，区间 ${fmt(raw.min)} ~ ${fmt(raw.max)}</span>` : '');
+      }
+    },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: '#39404e' } }, axisLabel: { color: '#8b95a7' } },
+    yAxis: {
+      type: 'value', scale: true,
+      splitLine: { lineStyle: { color: '#20242d' } },
+      axisLabel: { color: '#8b95a7', formatter: (v) => fmtCn(v) }
+    },
+    series: [{
+      type: 'line', showSymbol: false, smooth: 0.25, data,
+      lineStyle: { width: 2, color: '#fe2c55' },
+      areaStyle: {
+        color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [{ offset: 0, color: 'rgba(254,44,85,.35)' }, { offset: 1, color: 'rgba(254,44,85,0)' }] }
+      }
+    }]
+  }, true);
+}
+
+function renderChannels(d) {
+  const ch = d.channels || {};
+  const map = { chHook: ch.hook, chWs: ch.ws, chSeq: ch.wsSeq, chApi: ch.enterApi, chSrv: ch.endpoint };
+  for (const [id, on] of Object.entries(map)) {
+    const el = $(id);
+    if (el) el.className = 'badge ' + (on ? 'on' : 'off');
+  }
+  $('diagHint').textContent = d.hint || '';
+}
+
+function renderStorage(h) {
+  const bytes = h.dbBytes || 0;
+  const size = bytes >= 1048576 ? (bytes / 1048576).toFixed(2) + ' MB'
+    : bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KB' : bytes + ' B';
+  const prune = h.retention?.lastPruneAt ? new Date(h.retention.lastPruneAt).toLocaleString('zh-CN', { hour12: false }) : '未执行';
+  $('dbInfo').textContent = `数据库 ${size} · 采样 ${fmt(h.samples)} 条 · 保留 ${h.retention?.days ?? '-'} 天后自动清理（上次 ${prune}）`;
+}
+
+async function refresh() {
+  api('/api/diagnostics').then(renderChannels).catch(() => {});
+  api('/api/health').then(renderStorage).catch(() => {});
+  if (!state.roomId) { setConn('warn', '等待扩展上报数据…'); return; }
+  try {
+    const [summary, series] = await Promise.all([
+      api(`/api/rooms/${state.roomId}/summary?hours=24`),
+      api(`/api/rooms/${state.roomId}/series?metric=${state.metric}&minutes=${state.minutes}&max_points=600`)
+    ]);
+    const age = summary.stats[state.metric]?.currentAt ? Date.now() - summary.stats[state.metric].currentAt : null;
+    if (age == null) setConn('warn', '该指标还没有数据');
+    else if (age < 60000) setConn('ok', `数据新鲜（${Math.round(age / 1000)} 秒前）`);
+    else setConn('bad', `数据停滞（${Math.round(age / 60000)} 分钟前）`);
+
+    const s = summary.stats[state.metric] || {};
+    renderMetricBar(summary);
+    $('cur').textContent = s.current == null ? '—' : fmtCn(s.current);
+    $('curMeta').textContent = s.currentAt
+      ? `${timeStr(s.currentAt)} · 来源 ${s.currentSource || '-'}${s.currentText ? ' · 原文 ' + s.currentText : ''}`
+      : '';
+    $('peak').textContent = fmtCn(s.peak);
+    $('avg').textContent = fmtCn(s.avg == null ? null : Math.round(s.avg));
+    $('count').textContent = fmt(s.samples);
+    $('pointsInfo').textContent = `${series.total} 条原始采样 → ${series.points.length} 个点` +
+      (series.bucketMs ? `（每桶 ${Math.round(series.bucketMs / 1000)}s）` : '') +
+      (series.source ? ` · 来源 ${series.source}` : '');
+    renderChart(series.points, state.labels[state.metric] || state.metric);
+    renderEvents(summary.events || []);
+    const keys = summary.observedRawKeys || [];
+    $('keys').innerHTML = keys.length ? keys.map((k) => `<code>${k}</code>`).join('') : '<span class="muted">暂无</span>';
+    $('csvLink').href = `/api/rooms/${state.roomId}/export.csv?metric=${state.metric}`;
+  } catch (e) {
+    setConn('bad', String(e.message || e));
+  }
+}
+
+// 指标按钮由 renderMetricBar() 动态生成，这里只绑时间窗与房间切换
+document.querySelectorAll('.range').forEach((btn) => btn.addEventListener('click', () => {
+  document.querySelectorAll('.range').forEach((b) => b.classList.remove('active'));
+  btn.classList.add('active');
+  state.minutes = Number(btn.dataset.minutes);
+  refresh();
+}));
+$('roomSel').addEventListener('change', (e) => {
+  state.roomId = e.target.value;
+  localStorage.setItem('dy_room', state.roomId);
+  refresh();
+});
+// 用户正在操作下拉框时不许重建它，否则展开的列表会被清空导致点不中
+$('roomSel').addEventListener('focus', () => { selectBusy = true; });
+$('roomSel').addEventListener('blur', () => { selectBusy = false; });
+$('roomSel').addEventListener('mousedown', () => { selectBusy = true; });
+$('onlyActive').addEventListener('change', (e) => {
+  state.showAll = !e.target.checked;
+  roomSignature = '';   // 强制重建一次
+  loadRooms();
+});
+$('refresh').addEventListener('click', refresh);
+
+(async function boot() {
+  if (window.echarts) state.chart = echarts.init($('chart'), null, { renderer: 'canvas' });
+  else $('chart').innerHTML = '<div class="muted" style="padding:40px">ECharts 没加载出来（离线？），但数据接口仍然可用。</div>';
+  window.addEventListener('resize', () => state.chart && state.chart.resize());
+  await loadRooms();
+  await refresh();
+  state.timer = setInterval(async () => {
+    await loadRooms();
+    await refresh();
+  }, 5000);
+})();
+</script>
+</body>
+</html>

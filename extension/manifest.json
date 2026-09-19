@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "直播间人数采集器（抖音 + B站）",
+  "version": "0.2.0",
+  "description": "采集抖音 / B站网页版直播间的人数数据，上报到本地 Python 服务。",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "http://127.0.0.1:8787/*",
+    "http://localhost:8787/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "直播间人数采集器"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://live.douyin.com/*",
+        "https://www.douyin.com/*",
+        "https://live.bilibili.com/*"
+      ],
+      "js": ["src/inject-hook.js", "src/platform-bilibili.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://live.douyin.com/*",
+        "https://www.douyin.com/*",
+        "https://live.bilibili.com/*"
+      ],
+      "js": ["src/bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    }
+  ]
+}
